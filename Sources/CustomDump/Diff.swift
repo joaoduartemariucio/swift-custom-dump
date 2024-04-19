@@ -26,7 +26,7 @@
 /// - Returns: A string describing any difference detected between values, or `nil` if no difference
 ///   is detected.
 public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String? {
-  var visitedItems: Set<ObjectIdentifier> = []
+  var tracker = ObjectTracker()
 
   func diffHelp(
     _ lhs: Any,
@@ -34,13 +34,21 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
     lhsName: String?,
     rhsName: String?,
     separator: String,
-    indent: Int
+    indent: Int,
+    isRoot: Bool
   ) -> String {
     let rhsName = rhsName ?? lhsName
-    guard !isMirrorEqual(lhs, rhs) else {
-      return _customDump(lhs, name: rhsName, indent: indent, maxDepth: 0)
-        .appending(separator)
-        .indenting(with: format.both + " ")
+    guard lhsName != rhsName || !isMirrorEqual(lhs, rhs) else {
+      return _customDump(
+        lhs,
+        name: rhsName,
+        indent: indent,
+        isRoot: isRoot,
+        maxDepth: 0,
+        tracker: &tracker
+      )
+      .appending(separator)
+      .indenting(with: format.both + " ")
     }
 
     let lhsMirror = Mirror(customDumpReflecting: lhs)
@@ -48,16 +56,37 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
     var out = ""
 
     func diffEverything() {
+      var lhs = _customDump(
+        lhs,
+        name: lhsName,
+        indent: indent,
+        isRoot: isRoot,
+        maxDepth: .max,
+        tracker: &tracker
+      )
+      var rhs = _customDump(
+        rhs,
+        name: rhsName,
+        indent: indent,
+        isRoot: isRoot,
+        maxDepth: .max,
+        tracker: &tracker
+      )
+      if lhs == rhs {
+        if lhsMirror.subjectType != rhsMirror.subjectType {
+          lhs.append(" as \(typeName(lhsMirror.subjectType))")
+          rhs.append(" as \(typeName(rhsMirror.subjectType))")
+        }
+      }
+      lhs.append(separator)
+      rhs.append(separator)
+
       print(
-        _customDump(lhs, name: lhsName, indent: indent, maxDepth: .max)
-          .appending(separator)
-          .indenting(with: format.first + " "),
+        lhs.indenting(with: format.first + " "),
         to: &out
       )
       print(
-        _customDump(rhs, name: rhsName, indent: indent, maxDepth: .max)
-          .appending(separator)
-          .indenting(with: format.second + " "),
+        rhs.indenting(with: format.second + " "),
         terminator: "",
         to: &out
       )
@@ -70,37 +99,64 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
     }
 
     func diffChildren(
+      lhs: Any = lhs,
+      rhs: Any = rhs,
       _ lhsMirror: Mirror,
       _ rhsMirror: Mirror,
+      lhsName: String? = lhsName,
+      rhsName: String? = rhsName,
+      nameSuffix: String = ":",
       prefix: String,
       suffix: String,
       elementIndent: Int,
       elementSeparator: String,
       collapseUnchanged: Bool,
+      filter isIncluded: (Mirror.Child) -> Bool = { _ in true },
       areEquivalent: (Mirror.Child, Mirror.Child) -> Bool = { $0.label == $1.label },
       areInIncreasingOrder: ((Mirror.Child, Mirror.Child) -> Bool)? = nil,
-      _ transform: (inout Mirror.Child, Int) -> Void = { _, _ in }
+      map transform: (inout Mirror.Child, Int) -> Void = { _, _ in }
     ) {
-      guard !lhsMirror.children.isEmpty || !rhsMirror.children.isEmpty
-      else {
-        print(
+      var lhsChildren = Array(lhsMirror.children)
+      var rhsChildren = Array(rhsMirror.children)
+
+      if isMirrorEqual(lhsChildren, rhsChildren),
+        !(lhs is _CustomDiffObject),
+        !(rhs is _CustomDiffObject)
+      {
+        let lhsDump =
           _customDump(
             lhs,
             name: lhsName,
+            nameSuffix: nameSuffix,
             indent: indent,
-            maxDepth: 0
-          )
-          .indenting(with: format.first + " "),
-          to: &out
-        )
-        print(
+            isRoot: false,
+            maxDepth: 0,
+            tracker: &tracker
+          ) + separator
+        let rhsDump =
           _customDump(
             rhs,
             name: rhsName,
+            nameSuffix: nameSuffix,
             indent: indent,
-            maxDepth: 0
+            isRoot: false,
+            maxDepth: 0,
+            tracker: &tracker
+          ) + separator
+        if lhsDump == rhsDump {
+          print(
+            "// Not equal but no difference detected:"
+              .indenting(by: indent)
+              .indenting(with: format.both + " "),
+            to: &out
           )
-          .indenting(with: format.second + " "),
+        }
+        print(
+          lhsDump.indenting(with: format.first + " "),
+          to: &out
+        )
+        print(
+          rhsDump.indenting(with: format.second + " "),
           terminator: "",
           to: &out
         )
@@ -113,8 +169,11 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           _customDump(
             lhs,
             name: lhsName,
+            nameSuffix: nameSuffix,
             indent: indent,
-            maxDepth: .max
+            isRoot: isRoot,
+            maxDepth: .max,
+            tracker: &tracker
           )
           .indenting(with: format.first + " "),
           to: &out
@@ -123,8 +182,11 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           _customDump(
             rhs,
             name: rhsName,
+            nameSuffix: nameSuffix,
             indent: indent,
-            maxDepth: .max
+            isRoot: isRoot,
+            maxDepth: .max,
+            tracker: &tracker
           )
           .indenting(with: format.second + " "),
           terminator: "",
@@ -133,7 +195,10 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         return
       }
 
-      let name = rhsName.map { "\($0): " } ?? ""
+      lhsChildren.removeAll(where: { !isIncluded($0) })
+      rhsChildren.removeAll(where: { !isIncluded($0) })
+
+      let name = rhsName.map { "\($0)\(nameSuffix) " } ?? ""
       print(
         name
           .appending(prefix)
@@ -141,9 +206,6 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           .indenting(with: format.both + " "),
         to: &out
       )
-
-      var lhsChildren = Array(lhsMirror.children)
-      var rhsChildren = Array(rhsMirror.children)
 
       if let areInIncreasingOrder = areInIncreasingOrder {
         lhsChildren.sort(by: areInIncreasingOrder)
@@ -165,7 +227,9 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
               child.value,
               name: child.label,
               indent: indent + elementIndent,
-              maxDepth: 0
+              isRoot: false,
+              maxDepth: 0,
+              tracker: &tracker
             )
             .indenting(with: format.both + " "),
             terminator: rhsOffset - 1 == rhsChildren.count - 1 ? "\n" : "\(elementSeparator)\n",
@@ -221,7 +285,8 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
               separator: lhsOffset == lhsChildren.count - 1 && rhsOffset == rhsChildren.count - 1
                 ? ""
                 : elementSeparator,
-              indent: indent + elementIndent
+              indent: indent + elementIndent,
+              isRoot: false
             ),
             to: &out
           )
@@ -237,7 +302,9 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
               lhsChild.value,
               name: lhsChild.label,
               indent: indent + elementIndent,
-              maxDepth: .max
+              isRoot: false,
+              maxDepth: .max,
+              tracker: &tracker
             )
             .indenting(with: format.first + " "),
             terminator: lhsOffset == lhsChildren.count - 1 ? "\n" : "\(elementSeparator)\n",
@@ -253,7 +320,9 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
               rhsChild.value,
               name: rhsChild.label,
               indent: indent + elementIndent,
-              maxDepth: .max
+              isRoot: false,
+              maxDepth: .max,
+              tracker: &tracker
             )
             .indenting(with: format.second + " "),
             terminator: rhsOffset == rhsChildren.count - 1 && unchangedBuffer.isEmpty
@@ -280,6 +349,57 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
     case (is CustomDumpStringConvertible, _, is CustomDumpStringConvertible, _):
       diffEverything()
 
+    case let (lhs as _CustomDiffObject, _, rhs as _CustomDiffObject, _):
+      let lhsItem = lhs._objectIdentifier
+      let rhsItem = rhs._objectIdentifier
+      if lhsItem == rhsItem {
+        let (lhs, rhs) = lhs._customDiffValues
+        let subjectType = typeName(type(of: lhs))
+        var occurrence = tracker.occurrencePerType[subjectType, default: 1] {
+          didSet { tracker.occurrencePerType[subjectType] = occurrence }
+        }
+        var id: UInt {
+          let id = tracker.idPerItem[lhsItem, default: occurrence]
+          tracker.idPerItem[lhsItem] = id
+          return id
+        }
+        if tracker.visitedItems.contains(lhsItem) {
+          print(
+            "\(lhsName.map { "\($0): " } ?? "")#\(id) \(subjectType)(↩︎)\(separator)"
+              .indenting(by: indent)
+              .indenting(with: format.first + " "),
+            to: &out
+          )
+          print(
+            "\(rhsName.map { "\($0): " } ?? "")#\(id) \(subjectType)(↩︎)\(separator)"
+              .indenting(by: indent)
+              .indenting(with: format.second + " "),
+            terminator: "",
+            to: &out
+          )
+        } else {
+          diffChildren(
+            lhs: lhs,
+            rhs: rhs,
+            Mirror(customDumpReflecting: lhs),
+            Mirror(customDumpReflecting: rhs),
+            lhsName: "\(lhsName.map { "\($0): " } ?? "")#\(id)",
+            rhsName: "\(rhsName.map { "\($0): " } ?? "")#\(id)",
+            nameSuffix: "",
+            prefix: "\(subjectType)(",
+            suffix: ")",
+            elementIndent: 2,
+            elementSeparator: ",",
+            collapseUnchanged: false,
+            filter: macroPropertyFilter(for: lhs)
+          )
+          tracker.visitedItems.insert(lhsItem)
+          occurrence += 1
+        }
+      } else {
+        diffEverything()
+      }
+
     case let (lhs as CustomDumpRepresentable, _, rhs as CustomDumpRepresentable, _):
       out.write(
         diffHelp(
@@ -288,7 +408,8 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           lhsName: lhsName,
           rhsName: rhsName,
           separator: separator,
-          indent: indent
+          indent: indent,
+          isRoot: isRoot
         )
       )
 
@@ -296,31 +417,78 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
       let lhsItem = ObjectIdentifier(lhs)
       let rhsItem = ObjectIdentifier(rhs)
       let subjectType = typeName(lhsMirror.subjectType)
-      if visitedItems.contains(lhsItem) || visitedItems.contains(rhsItem) {
-        print(
-          "\(subjectType)(↩︎)"
-            .indenting(by: indent)
-            .indenting(with: format.first + " "),
-          to: &out
-        )
-        print(
-          "\(subjectType)(↩︎)"
-            .indenting(by: indent)
-            .indenting(with: format.second + " "),
-          terminator: "",
-          to: &out
-        )
+      if !tracker.visitedItems.contains(lhsItem) && !tracker.visitedItems.contains(rhsItem) {
+        if lhsItem == rhsItem {
+          diffChildren(
+            lhsMirror,
+            rhsMirror,
+            prefix: "\(subjectType)(",
+            suffix: ")",
+            elementIndent: 2,
+            elementSeparator: ",",
+            collapseUnchanged: false,
+            filter: macroPropertyFilter(for: lhs)
+          )
+        } else {
+          diffEverything()
+        }
       } else {
-        visitedItems.insert(lhsItem)
-        diffChildren(
-          lhsMirror,
-          rhsMirror,
-          prefix: "\(subjectType)(",
-          suffix: ")",
-          elementIndent: 2,
-          elementSeparator: ",",
-          collapseUnchanged: false
-        )
+        var occurrence: UInt { tracker.occurrencePerType[subjectType, default: 0] }
+        if tracker.visitedItems.contains(lhsItem) {
+          var lhsID: String {
+            let id = tracker.idPerItem[lhsItem, default: occurrence]
+            tracker.idPerItem[lhsItem] = id
+            return id > 0 ? "#\(id) " : ""
+          }
+          print(
+            "\(lhsName.map { "\($0): " } ?? "")\(lhsID)\(subjectType)(↩︎)"
+              .indenting(by: indent)
+              .indenting(with: format.first + " "),
+            to: &out
+          )
+        } else {
+          print(
+            _customDump(
+              lhs,
+              name: lhsName,
+              indent: indent,
+              isRoot: isRoot,
+              maxDepth: .max,
+              tracker: &tracker
+            )
+            .indenting(with: format.first + " "),
+            terminator: "",
+            to: &out
+          )
+        }
+        if tracker.visitedItems.contains(rhsItem) {
+          var rhsID: String {
+            let id = tracker.idPerItem[rhsItem, default: occurrence]
+            tracker.idPerItem[rhsItem] = id
+            return id > 0 ? "#\(id) " : ""
+          }
+          print(
+            "\(rhsName.map { "\($0): " } ?? "")\(rhsID)\(subjectType)(↩︎)"
+              .indenting(by: indent)
+              .indenting(with: format.second + " "),
+            terminator: "",
+            to: &out
+          )
+        } else {
+          print(
+            _customDump(
+              rhs,
+              name: rhsName,
+              indent: indent,
+              isRoot: isRoot,
+              maxDepth: .max,
+              tracker: &tracker
+            )
+            .indenting(with: format.second + " "),
+            terminator: "",
+            to: &out
+          )
+        }
       }
 
     case (_, .collection?, _, .collection?):
@@ -335,7 +503,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         areEquivalent: {
           isIdentityEqual($0.value, $1.value) || isMirrorEqual($0.value, $1.value)
         },
-        { $0.label = "[\($1)]" }
+        map: { $0.label = "[\($1)]" }
       )
 
     case (_, .dictionary?, _, .dictionary?):
@@ -356,21 +524,48 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           }
           return lhs.key == rhs.key
         },
-        areInIncreasingOrder: {
-          guard
-            let lhs = $0.value as? (key: AnyHashable, value: Any),
-            let rhs = $1.value as? (key: AnyHashable, value: Any)
-          else {
-            return _customDump($0.value, name: nil, indent: 0, maxDepth: 1)
-              < _customDump($1.value, name: nil, indent: 0, maxDepth: 1)
+        areInIncreasingOrder: lhsMirror.subjectType is _UnorderedCollection.Type
+          ? {
+            let (lhsValue, rhsValue): (Any, Any)
+            if let lhs = $0.value as? (key: AnyHashable, value: Any),
+              let rhs = $1.value as? (key: AnyHashable, value: Any)
+            {
+              lhsValue = lhs.key.base
+              rhsValue = rhs.key.base
+            } else {
+              lhsValue = $0.value
+              rhsValue = $1.value
+            }
+            let lhsDump = _customDump(
+              lhsValue,
+              name: nil,
+              indent: 0,
+              isRoot: false,
+              maxDepth: 1,
+              tracker: &tracker
+            )
+            let rhsDump = _customDump(
+              rhsValue,
+              name: nil,
+              indent: 0,
+              isRoot: false,
+              maxDepth: 1,
+              tracker: &tracker
+            )
+            return lhsDump < rhsDump
           }
-          return _customDump(lhs.key.base, name: nil, indent: 0, maxDepth: 1)
-            < _customDump(rhs.key.base, name: nil, indent: 0, maxDepth: 1)
-        }
+          : nil
       ) { child, _ in
         guard let pair = child.value as? (key: AnyHashable, value: Any) else { return }
         child = (
-          _customDump(pair.key.base, name: nil, indent: 0, maxDepth: 1),
+          _customDump(
+            pair.key.base,
+            name: nil,
+            indent: 0,
+            isRoot: false,
+            maxDepth: 1,
+            tracker: &tracker
+          ),
           pair.value
         )
       }
@@ -396,7 +591,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         ? rhsChildMirror
         : Mirror(rhs, unlabeledChildren: [rhsChild.value], displayStyle: .tuple)
 
-      let subjectType = typeName(lhsMirror.subjectType)
+      let subjectType = isRoot ? typeName(lhsMirror.subjectType) : ""
       diffChildren(
         lhsAssociatedValuesMirror,
         rhsAssociatedValuesMirror,
@@ -405,7 +600,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         elementIndent: 2,
         elementSeparator: ",",
         collapseUnchanged: false,
-        { child, _ in
+        map: { child, _ in
           if child.label?.first == "." {
             child.label = nil
           }
@@ -428,7 +623,8 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
           lhsName: lhsName,
           rhsName: rhsName,
           separator: separator,
-          indent: indent
+          indent: indent,
+          isRoot: isRoot
         )
       )
 
@@ -444,10 +640,27 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         areEquivalent: {
           isIdentityEqual($0.value, $1.value) || isMirrorEqual($0.value, $1.value)
         },
-        areInIncreasingOrder: {
-          _customDump($0.value, name: nil, indent: 0, maxDepth: 1)
-            < _customDump($1.value, name: nil, indent: 0, maxDepth: 1)
-        }
+        areInIncreasingOrder: lhsMirror.subjectType is _UnorderedCollection.Type
+          ? {
+            let lhsDump = _customDump(
+              $0.value,
+              name: nil,
+              indent: 0,
+              isRoot: false,
+              maxDepth: 1,
+              tracker: &tracker
+            )
+            let rhsDump = _customDump(
+              $1.value,
+              name: nil,
+              indent: 0,
+              isRoot: false,
+              maxDepth: 1,
+              tracker: &tracker
+            )
+            return lhsDump < rhsDump
+          }
+          : nil
       )
 
     case (_, .struct?, _, .struct?):
@@ -458,7 +671,8 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         suffix: ")",
         elementIndent: 2,
         elementSeparator: ",",
-        collapseUnchanged: false
+        collapseUnchanged: false,
+        filter: macroPropertyFilter(for: lhs)
       )
 
     case (_, .tuple?, _, .tuple?):
@@ -470,7 +684,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
         elementIndent: 2,
         elementSeparator: ",",
         collapseUnchanged: false,
-        { child, _ in
+        map: { child, _ in
           if child.label?.first == "." {
             child.label = nil
           }
@@ -498,7 +712,10 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
               .split(separator: "\n", omittingEmptySubsequences: false)
               .map(Line.init(rawValue:))
         )
-        let hashes = String(repeating: "#", count: max(lhs.hashCount, rhs.hashCount))
+        let hashes = String(
+          repeating: "#",
+          count: max(lhs.hashCount(isMultiline: true), rhs.hashCount(isMultiline: true))
+        )
         diffChildren(
           lhsMirror,
           rhsMirror,
@@ -521,7 +738,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
 
   guard !isMirrorEqual(lhs, rhs) else { return nil }
 
-  var diff = diffHelp(lhs, rhs, lhsName: nil, rhsName: nil, separator: "", indent: 0)
+  var diff = diffHelp(lhs, rhs, lhsName: nil, rhsName: nil, separator: "", indent: 0, isRoot: true)
   if diff.last == "\n" { diff.removeLast() }
   return diff
 }
@@ -536,7 +753,7 @@ public func diff<T>(_ lhs: T, _ rhs: T, format: DiffFormat = .default) -> String
 ///
 /// This type comes with two pre-configured formats that you will probably want to use for most
 /// situations: ``DiffFormat/default`` and ``DiffFormat/proportional``.
-public struct DiffFormat {
+public struct DiffFormat: Sendable {
   /// A string prepended to lines that only appear in the string representation of the first value,
   /// e.g. a "removal."
   public var first: String
@@ -584,5 +801,16 @@ private struct Line: CustomDumpStringConvertible, Identifiable {
 
   var customDumpDescription: String {
     .init(self.rawValue)
+  }
+}
+
+public protocol _CustomDiffObject {
+  var _customDiffValues: (Any, Any) { get }
+  var _objectIdentifier: ObjectIdentifier { get }
+}
+
+extension _CustomDiffObject where Self: AnyObject {
+  public var _objectIdentifier: ObjectIdentifier {
+    ObjectIdentifier(self)
   }
 }

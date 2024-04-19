@@ -16,12 +16,90 @@ import XCTest
 @available(macOS 10.15, iOS 13, tvOS 13, watchOS 6, *)
 final class DumpTests: XCTestCase {
   func testAnyType() {
-    var dump = ""
-    customDump(Foo.Bar.self, to: &dump)
     XCTAssertNoDifference(
-      dump,
+      String(customDumping: Foo.Bar.self),
       """
       Foo.Bar.self
+      """
+    )
+
+    struct Feature {
+      struct State {}
+    }
+    XCTAssertNoDifference(
+      String(customDumping: Feature.State.self),
+      """
+      DumpTests.Feature.State.self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: (x: Double, y: Double).self),
+      """
+      (x: Double, y: Double).self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: Double?.self),
+      """
+      Double?.self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [Int].self),
+      """
+      [Int].self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [String: Int].self),
+      """
+      [String: Int].self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [[Double: Double?]].self),
+      """
+      [[Double: Double?]].self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [[Double: Double]?].self),
+      """
+      [[Double: Double]?].self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [[Double: [Double]]]?.self),
+      """
+      [[Double: [Double]]]?.self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [[[Double: Double]]]?.self),
+      """
+      [[[Double: Double]]]?.self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [Double: [Double?]].self),
+      """
+      [Double: [Double?]].self
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(customDumping: [Double: [Double]?].self),
+      """
+      [Double: [Double]?].self
       """
     )
   }
@@ -189,6 +267,62 @@ final class DumpTests: XCTestCase {
       ]
       """
     )
+
+    dump = ""
+    customDump(
+      OrderedDictionary(
+        pairs: [
+          2: User(
+            id: 2,
+            name: "Blob, Jr."
+          ),
+          1: User(
+            id: 1,
+            name: "Blob"
+          ),
+        ] as KeyValuePairs),
+      to: &dump
+    )
+    XCTAssertNoDifference(
+      dump,
+      """
+      [
+        2: User(
+          id: 2,
+          name: "Blob, Jr."
+        ),
+        1: User(
+          id: 1,
+          name: "Blob"
+        )
+      ]
+      """
+    )
+  }
+
+  func testDictionary_Nested() {
+    struct NestedDictionary {
+      let content: [String: Int]
+    }
+
+    XCTAssertNoDifference(
+      """
+      DumpTests.NestedDictionary(
+        content: [
+          "a": 5,
+          "b": 9,
+          "c": 1,
+          "d": -3,
+          "e": 12
+        ]
+      )
+      """,
+      String(
+        customDumping: NestedDictionary(
+          content: ["a": 5, "b": 9, "c": 1, "d": -3, "e": 12]
+        )
+      )
+    )
   }
 
   func testEnum() {
@@ -239,6 +373,20 @@ final class DumpTests: XCTestCase {
       Enum.fizz(
         0.9,
         buzz: "2"
+      )
+      """
+    )
+
+    dump = ""
+    customDump(Nested.nest(.fizz(0.9, buzz: "2")), to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      """
+      Nested.nest(
+        .fizz(
+          0.9,
+          buzz: "2"
+        )
       )
       """
     )
@@ -398,6 +546,50 @@ final class DumpTests: XCTestCase {
     )
   }
 
+  func testString() {
+    var dump = ""
+    customDump("Hello!", to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      #""Hello!""#
+    )
+
+    dump = ""
+    customDump(#"Hello, "world!""#, to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      ##"#"Hello, "world!""#"##
+    )
+
+    dump = ""
+    customDump(####"This has a "### in it"####, to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      #####"####"This has a "### in it"####"#####
+    )
+
+    dump = ""
+    customDump("This has a \\ in it", to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      ##"#"This has a \ in it"#"##
+    )
+
+    dump = ""
+    customDump("This has no special characters in it", to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      "\"This has no special characters in it\""
+    )
+
+    dump = ""
+    customDump("This has a \t in it", to: &dump)
+    XCTAssertNoDifference(
+      dump,
+      "\"This has a \\t in it\""
+    )
+  }
+
   func testMultilineString() {
     var dump = ""
     customDump("Hello,\nWorld!", to: &dump)
@@ -515,12 +707,66 @@ final class DumpTests: XCTestCase {
     )
   }
 
-  #if os(iOS) || os(macOS) || os(tvOS) || os(watchOS)
-    func testKeyPath() {
+  func testKeyPath() {
+    // NB: While this should run on >=5.9, it currently crashes CI on Xcode 15.2
+    #if swift(>=5.10) && (os(iOS) || os(macOS) || os(tvOS) || os(watchOS))
       var dump = ""
+      if #available(macOS 13.3, iOS 16.4, watchOS 9.4, tvOS 16.4, *) {
+        dump = ""
+        customDump(\UserClass.name, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \UserClass.name
+          """#
+        )
 
-      // Run twice to exercise cached lookup
-      for _ in 1...2 {
+        dump = ""
+        customDump(\Pair.driver.name, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \Pair.driver.name
+          """#
+        )
+
+        dump = ""
+        customDump(\User.name.count, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \User.name.count
+          """#
+        )
+
+        dump = ""
+        customDump(\(x: Double, y: Double).x, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \(x: Double, y: Double).x
+          """#
+        )
+
+        dump = ""
+        customDump(\Item.$isInStock, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \Item.$isInStock
+          """#
+        )
+
+        dump = ""
+        customDump(\Wrapped<String>.count, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          \Wrapped<String>.subscript(dynamicMember: <unknown>)
+          """#
+        )
+        return
+      } else {
         dump = ""
         customDump(\UserClass.name, to: &dump)
         XCTAssertNoDifference(
@@ -556,9 +802,27 @@ final class DumpTests: XCTestCase {
           WritableKeyPath<(x: Double, y: Double), Double>
           """#
         )
+
+        dump = ""
+        customDump(\Item.$isInStock, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          KeyPath<Item, Wrapped<Bool>>
+          """#
+        )
+
+        dump = ""
+        customDump(\Wrapped<String>.count, to: &dump)
+        XCTAssertNoDifference(
+          dump,
+          #"""
+          KeyPath<Wrapped<String>, Int>
+          """#
+        )
       }
-    }
-  #endif
+    #endif
+  }
 
   func testNamespacedTypes() {
     var dump = ""
@@ -608,7 +872,7 @@ final class DumpTests: XCTestCase {
       dump,
       """
       Result.success(
-        Result.success(42)
+        .success(42)
       )
       """
     )
@@ -715,6 +979,231 @@ final class DumpTests: XCTestCase {
     )
   }
 
+  func testSuperclass() {
+    var dump = ""
+    class Human {
+      let name = "John"
+      let email = "john@me.com"
+      let age = 97
+    }
+
+    class Doctor: Human {
+      let field = "Podiatry"
+    }
+
+    customDump(Doctor(), to: &dump)
+
+    XCTAssertNoDifference(
+      dump,
+      """
+      DumpTests.Doctor(
+        name: "John",
+        email: "john@me.com",
+        age: 97,
+        field: "Podiatry"
+      )
+      """
+    )
+  }
+
+  func testLayersOfInheritance() {
+    var dump = ""
+    class Human {
+      let name = "John"
+      let email = "john@me.com"
+      let age = 97
+    }
+
+    class Doctor: Human {
+      let field = "Podiatry"
+    }
+
+    class Surgeon: Doctor {
+      let skillLevel = "Expert"
+    }
+
+    customDump(Surgeon(), to: &dump)
+
+    XCTAssertNoDifference(
+      dump,
+      """
+      DumpTests.Surgeon(
+        name: "John",
+        email: "john@me.com",
+        age: 97,
+        field: "Podiatry",
+        skillLevel: "Expert"
+      )
+      """
+    )
+  }
+
+  func testRecursion() {
+    class Human {
+      let name: String
+
+      init(name: String) {
+        self.name = name
+      }
+    }
+
+    class Child: Human {
+      weak var parent: Parent?
+    }
+
+    class Parent: Human {
+      let children: [Human]
+
+      init(name: String, children: [Child]) {
+        self.children = children
+        super.init(name: name)
+
+        children.forEach {
+          $0.parent = self
+        }
+      }
+    }
+
+    let subject = Parent(
+      name: "Arthur",
+      children: [
+        Child(name: "Virginia"),
+        Child(name: "Ronald"),
+        Child(name: "Fred"),
+        Child(name: "George"),
+        Child(name: "Percy"),
+        Child(name: "Charles"),
+      ])
+
+    var dump = ""
+    customDump(subject, to: &dump)
+
+    XCTAssertNoDifference(
+      dump,
+      """
+      DumpTests.Parent(
+        name: "Arthur",
+        children: [
+          [0]: DumpTests.Child(
+            name: "Virginia",
+            parent: DumpTests.Parent(↩︎)
+          ),
+          [1]: #1 DumpTests.Child(
+            name: "Ronald",
+            parent: DumpTests.Parent(↩︎)
+          ),
+          [2]: #2 DumpTests.Child(
+            name: "Fred",
+            parent: DumpTests.Parent(↩︎)
+          ),
+          [3]: #3 DumpTests.Child(
+            name: "George",
+            parent: DumpTests.Parent(↩︎)
+          ),
+          [4]: #4 DumpTests.Child(
+            name: "Percy",
+            parent: DumpTests.Parent(↩︎)
+          ),
+          [5]: #5 DumpTests.Child(
+            name: "Charles",
+            parent: DumpTests.Parent(↩︎)
+          )
+        ]
+      )
+      """
+    )
+  }
+
+  func testRepetition() {
+    class Human {
+      let name = "John"
+    }
+
+    class User: Human {
+      let email = "john@me.com"
+      let age = 97
+
+      let human: Human
+
+      init(human: Human) {
+        self.human = human
+      }
+    }
+
+    let human = Human()
+    let human2 = Human()
+
+    let user = User(human: human)
+    let user2 = User(human: human2)
+
+    var dump = ""
+    customDump(
+      [
+        human,
+        human,
+        human,
+        human2,
+        human2,
+        human2,
+        user,
+        user,
+        user,
+        user2,
+        user2,
+        user2,
+      ], to: &dump)
+
+    XCTAssertNoDifference(
+      dump,
+      """
+      [
+        [0]: DumpTests.Human(name: "John"),
+        [1]: DumpTests.Human(↩︎),
+        [2]: DumpTests.Human(↩︎),
+        [3]: #1 DumpTests.Human(name: "John"),
+        [4]: #1 DumpTests.Human(↩︎),
+        [5]: #1 DumpTests.Human(↩︎),
+        [6]: DumpTests.User(
+          name: "John",
+          email: "john@me.com",
+          age: 97,
+          human: DumpTests.Human(↩︎)
+        ),
+        [7]: DumpTests.User(↩︎),
+        [8]: DumpTests.User(↩︎),
+        [9]: #1 DumpTests.User(
+          name: "John",
+          email: "john@me.com",
+          age: 97,
+          human: #1 DumpTests.Human(↩︎)
+        ),
+        [10]: #1 DumpTests.User(↩︎),
+        [11]: #1 DumpTests.User(↩︎)
+      ]
+      """
+    )
+  }
+
+  #if (swift(>=5.7) && !targetEnvironment(macCatalyst) && (os(iOS) || os(tvOS) || os(watchOS))) || (swift(>=5.7.1) && os(macOS))
+    func testDuration() {
+      guard #available(macOS 13, iOS 16, watchOS 9, tvOS 16, *) else { return }
+
+      XCTAssertNoDifference(
+        String(customDumping: Duration.seconds(5)),
+        """
+        5 seconds
+        """
+      )
+
+      XCTAssertNoDifference(
+        String(customDumping: Duration.seconds(5) + .milliseconds(123)),
+        """
+        5 seconds, 123 milliseconds
+        """
+      )
+    }
+  #endif
+
   #if canImport(CoreGraphics)
     func testCoreGraphics() {
       var dump = ""
@@ -755,4 +1244,167 @@ final class DumpTests: XCTestCase {
       )
     }
   #endif
+
+  func testObservationRegistrarFiltered() {
+    struct ObservationRegistrar {}
+    class Object {
+      let name = "Blob Sr."
+      let _$observationRegistrar = ObservationRegistrar()
+    }
+    XCTAssertNoDifference(
+      String(customDumping: Object()),
+      """
+      DumpTests.Object(
+        name: "Blob Sr."
+      )
+      """
+    )
+    struct Value {
+      let name = "Blob Jr."
+      let _$observationRegistrar = ObservationRegistrar()
+    }
+    XCTAssertNoDifference(
+      String(customDumping: Value()),
+      """
+      DumpTests.Value(
+        name: "Blob Jr."
+      )
+      """
+    )
+  }
+
+  func testExplicitFilteredPropertyPreserved() {
+    struct ObservationRegistrar {}
+    class Object: CustomDumpReflectable {
+      let name = "Blob Sr."
+      let _$observationRegistrar = ObservationRegistrar()
+
+      var customDumpMirror: Mirror {
+        Mirror(
+          self,
+          children: ["name": self.name, "_$observationRegistrar": self._$observationRegistrar],
+          displayStyle: .class
+        )
+      }
+    }
+    XCTAssertNoDifference(
+      String(customDumping: Object()),
+      """
+      DumpTests.Object(
+        name: "Blob Sr.",
+        _$observationRegistrar: DumpTests.ObservationRegistrar()
+      )
+      """
+    )
+  }
+
+  func testDiffableObject() {
+    struct Login {
+      var email: String
+    }
+
+    class DiffableObject: _CustomDiffObject {
+      var _customDiffValues: (Any, Any) {
+        (Login(email: "blob@pointfree.co"), Login(email: "admin@pointfree.co"))
+      }
+    }
+
+    struct DiffableObjects {
+      var obj1: DiffableObject
+      var obj2: DiffableObject
+    }
+
+    struct DiffableObjectsParent {
+      var objs1: DiffableObjects
+      var objs2: DiffableObjects
+    }
+
+    let obj1 = DiffableObject()
+    let obj2 = DiffableObject()
+
+    XCTAssertNoDifference(
+      String(
+        customDumping: DiffableObjectsParent(
+          objs1: DiffableObjects(obj1: obj1, obj2: obj1),
+          objs2: DiffableObjects(obj1: obj2, obj2: obj2)
+        )
+      ),
+      """
+      DumpTests.DiffableObjectsParent(
+        objs1: DumpTests.DiffableObjects(
+          obj1: #1 DumpTests.Login(email: "admin@pointfree.co"),
+          obj2: #1 DumpTests.Login(↩︎)
+        ),
+        objs2: DumpTests.DiffableObjects(
+          obj1: #2 DumpTests.Login(email: "admin@pointfree.co"),
+          obj2: #2 DumpTests.Login(↩︎)
+        )
+      )
+      """
+    )
+
+    XCTAssertNoDifference(
+      String(
+        customDumping: DiffableObjectsParent(
+          objs1: DiffableObjects(obj1: obj1, obj2: obj2),
+          objs2: DiffableObjects(obj1: obj2, obj2: obj1)
+        )
+      ),
+      """
+      DumpTests.DiffableObjectsParent(
+        objs1: DumpTests.DiffableObjects(
+          obj1: #1 DumpTests.Login(email: "admin@pointfree.co"),
+          obj2: #2 DumpTests.Login(email: "admin@pointfree.co")
+        ),
+        objs2: DumpTests.DiffableObjects(
+          obj1: #2 DumpTests.Login(↩︎),
+          obj2: #1 DumpTests.Login(↩︎)
+        )
+      )
+      """
+    )
+  }
+
+  func testDiffableObject_Primitive() {
+    class DiffableObject: _CustomDiffObject {
+      var _customDiffValues: (Any, Any) {
+        ("before", "after")
+      }
+      static func == (lhs: DiffableObject, rhs: DiffableObject) -> Bool {
+        false
+      }
+    }
+
+    struct DiffableObjects {
+      var obj1: DiffableObject
+      var obj2: DiffableObject
+    }
+
+    struct DiffableObjectsParent {
+      var objs1: DiffableObjects
+      var objs2: DiffableObjects
+    }
+
+    let obj1 = DiffableObject()
+    let obj2 = DiffableObject()
+    let objs1 = DiffableObjects(obj1: obj1, obj2: obj1)
+    let objs2 = DiffableObjects(obj1: obj2, obj2: obj2)
+    let objsParent = DiffableObjectsParent(objs1: objs1, objs2: objs2)
+
+    XCTAssertNoDifference(
+      String(customDumping: objsParent),
+      """
+      DumpTests.DiffableObjectsParent(
+        objs1: DumpTests.DiffableObjects(
+          obj1: #1 "after",
+          obj2: #1 String(↩︎)
+        ),
+        objs2: DumpTests.DiffableObjects(
+          obj1: #2 "after",
+          obj2: #2 String(↩︎)
+        )
+      )
+      """
+    )
+  }
 }

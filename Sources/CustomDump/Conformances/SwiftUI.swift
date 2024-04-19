@@ -18,11 +18,14 @@
       case .spring():
         return "Animation.spring()"
       default:
+        var tracker = ObjectTracker()
         let base = _customDump(
           Mirror(reflecting: self).children.first?.value as Any,
           name: nil,
           indent: 2,
-          maxDepth: .max
+          isRoot: false,
+          maxDepth: .max,
+          tracker: &tracker
         )
         return """
           Animation(

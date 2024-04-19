@@ -3,6 +3,28 @@ import Foundation
 
 class RecursiveFoo { var foo: RecursiveFoo? }
 
+class RepeatedObject {
+  class Child {
+    let grandchild: Grandchild
+    init(id: String) {
+      grandchild = Grandchild(id: id)
+    }
+  }
+  class Grandchild {
+    let id: String
+    init(id: String) {
+      self.id = id
+    }
+  }
+
+  let child: Child
+  let grandchild: Grandchild
+  init(id: String) {
+    child = Child(id: id)
+    grandchild = child.grandchild
+  }
+}
+
 class UserClass {
   let id: Int, name: String
   init(id: Int, name: String) {
@@ -17,6 +39,12 @@ enum Enum {
   case baz(fizz: Double, buzz: String)
   case fizz(Double, buzz: String)
   case fu(bar: Int)
+  case buzz
+}
+
+enum Nested {
+  case nest(Enum)
+  case largerNest(Int, Enum)
 }
 
 enum Namespaced {
@@ -66,6 +94,12 @@ struct Wrapper<RawValue>: CustomDumpRepresentable {
 struct LoginState: CustomDumpReflectable {
   var email = "", password = "", token: String
 
+  init(email: String = "", password: String = "", token: String) {
+    self.email = email
+    self.password = password
+    self.token = token
+  }
+
   var customDumpMirror: Mirror {
     .init(
       self,
@@ -82,6 +116,13 @@ struct NestedDate { var date: Date? }
 
 struct NeverEqual: Equatable { static func == (lhs: Self, rhs: Self) -> Bool { false } }
 
+struct NeverEqualUser: Equatable {
+  let id: Int
+  let name: String
+
+  static func == (lhs: Self, rhs: Self) -> Bool { false }
+}
+
 struct Pair { let driver: User, passenger: User }
 
 struct Redacted<RawValue>: CustomDumpStringConvertible {
@@ -93,3 +134,27 @@ struct Redacted<RawValue>: CustomDumpStringConvertible {
 }
 
 struct User: Equatable, Identifiable { var id: Int, name: String }
+struct HashableUser: Equatable, Identifiable, Hashable { var id: Int, name: String }
+
+@dynamicMemberLookup
+@propertyWrapper
+struct Wrapped<Value> {
+  var wrappedValue: Value
+  var projectedValue: Self { self }
+
+  subscript<NewValue>(dynamicMember keyPath: KeyPath<Value, NewValue>) -> NewValue {
+    self.wrappedValue[keyPath: keyPath]
+  }
+}
+
+struct Item {
+  @Wrapped var isInStock = true
+}
+
+struct OrderedDictionary<Key, Value>: CustomReflectable {
+  var pairs: KeyValuePairs<Key, Value>
+
+  var customMirror: Mirror {
+    Mirror(self.pairs, unlabeledChildren: self.pairs, displayStyle: .dictionary)
+  }
+}
